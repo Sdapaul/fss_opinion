@@ -1,7 +1,17 @@
+"""
+금융규제·법령해석포털 (better.fsc.go.kr) 스크래퍼.
+
+회신사례 통합조회 API를 호출해 신규 항목을 가져옵니다.
+"""
+
+import json
 import requests
-from bs4 import BeautifulSoup
 from datetime import date, timedelta
-import re
+
+BASE_URL = "https://better.fsc.go.kr"
+
+# 회신사례 통합조회 AJAX 엔드포인트
+LIST_API = f"{BASE_URL}/fsc_new/replyCase/selectReplyCaseTotalReplyList.do"
 
 HEADERS = {
     "User-Agent": (
@@ -10,107 +20,112 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "ko-KR,ko;q=0.9",
-    "Referer": "https://www.fss.or.kr/",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Referer": (
+        f"{BASE_URL}/fsc_new/replyCase/TotalReplyList.do"
+        "?stNo=11&muNo=117&muGpNo=75"
+    ),
+    "X-Requested-With": "XMLHttpRequest",
 }
 
-BASE_URL = "https://www.fss.or.kr"
-
-SOURCES = [
-    {
-        "name": "비조치의견서",
-        "url": f"{BASE_URL}/fss/bbs/B0000188/list.do?menuNo=200218",
+# pastreqType 값 → 상세 페이지 URL 매핑
+#   gubun=1: 법령해석  → LawreqDetail.do  (파라미터: lawreqIdx)
+#   gubun=2: 비조치의견서 → OpinionDetail.do (파라미터: opinionIdx)
+DETAIL_URL_MAP = {
+    "법령해석": {
+        "path": "/fsc_new/replyCase/LawreqDetail.do",
+        "idx_param": "lawreqIdx",
     },
-    {
-        "name": "법령해석",
-        "url": f"{BASE_URL}/fss/bbs/B0000189/list.do?menuNo=200219",
+    "비조치의견서": {
+        "path": "/fsc_new/replyCase/OpinionDetail.do",
+        "idx_param": "opinionIdx",
     },
-]
+}
+
+# stNo / muNo 고정값 (포털 공통)
+ST_NO = "11"
+MU_NO = "117"
 
 
-def _parse_date(text: str) -> str:
-    """날짜 문자열 정규화 (YYYY.MM.DD / YYYY-MM-DD → YYYY-MM-DD)."""
-    text = text.strip()
-    text = re.sub(r"[./]", "-", text)
-    # 앞 10자만 사용 (시간 제거)
-    return text[:10]
-
-
-def _extract_items(soup: BeautifulSoup, source_name: str) -> list[dict]:
-    """공통 BBS 테이블에서 항목 추출."""
-    items = []
-
-    rows = soup.select("table.tb_list tbody tr")
-    if not rows:
-        # fallback: 일반 tbody tr
-        rows = soup.select("tbody tr")
-
-    for row in rows:
-        # 공지 행 건너뜀
-        if row.select_one("td.notice") or "공지" in row.get_text():
-            continue
-
-        title_tag = row.select_one("td.title a") or row.select_one("td a")
-        if not title_tag:
-            continue
-
-        title = title_tag.get_text(strip=True)
-        href = title_tag.get("href", "")
-
-        # 상대경로 처리
-        if href.startswith("/"):
-            href = BASE_URL + href
-        elif not href.startswith("http"):
-            href = BASE_URL + "/" + href.lstrip("./")
-
-        # 날짜
-        date_td = row.select_one("td.date") or row.select_one("td:last-child")
-        raw_date = date_td.get_text(strip=True) if date_td else ""
-        item_date = _parse_date(raw_date) if raw_date else ""
-
-        # 고유 ID (URL 파라미터 또는 제목+날짜)
-        item_id = href if href else f"{source_name}:{title}:{item_date}"
-
-        items.append(
-            {
-                "id": item_id,
-                "title": title,
-                "date": item_date,
-                "url": href,
-                "category": source_name,
-            }
+def _build_detail_url(item_type: str, data_idx: int) -> str:
+    """상세 페이지 URL 생성."""
+    mapping = DETAIL_URL_MAP.get(item_type)
+    if not mapping:
+        # 알 수 없는 타입은 목록 페이지로
+        return (
+            f"{BASE_URL}/fsc_new/replyCase/TotalReplyList.do"
+            f"?stNo={ST_NO}&muNo={MU_NO}&muGpNo=75"
         )
+    path = mapping["path"]
+    idx_param = mapping["idx_param"]
+    return (
+        f"{BASE_URL}{path}"
+        f"?stNo={ST_NO}&muNo={MU_NO}&{idx_param}={data_idx}&actCd=R"
+    )
 
-    return items
+
+def _fetch_page(start: int = 0, length: int = 50) -> list[dict]:
+    """API 한 페이지 호출 후 raw item 리스트 반환."""
+    payload = {
+        "draw": "1",
+        "start": str(start),
+        "length": str(length),
+        "searchKeyword": "",
+        "searchCondition": "",
+        "searchType": "",
+    }
+    resp = requests.post(LIST_API, headers=HEADERS, data=payload, timeout=20)
+    resp.raise_for_status()
+    result = resp.json()
+    return result.get("data", [])
 
 
-def fetch_new_items(seen_ids: set, days_back: int = 1) -> list[dict]:
+def fetch_new_items(seen_ids: set, days_back: int = 3) -> list[dict]:
     """
-    FSS에서 항목을 가져와 seen_ids 에 없는 신규 항목만 반환.
-    days_back: 오늘로부터 며칠 이내 항목까지 포함할지 (중복 방지 보조)
+    최근 days_back 일 이내 항목 중 seen_ids 에 없는 신규 항목 반환.
+
+    반환 구조:
+      {
+        "id":       str,   # 고유 키 (API의 dataIdx 기반)
+        "title":    str,
+        "date":     str,   # YYYY-MM-DD
+        "url":      str,   # 상세 페이지 URL
+        "category": str,   # 법령해석 / 비조치의견서
+      }
     """
     cutoff = (date.today() - timedelta(days=days_back)).isoformat()
     new_items: list[dict] = []
 
-    for source in SOURCES:
-        try:
-            resp = requests.get(source["url"], headers=HEADERS, timeout=15)
-            resp.raise_for_status()
-            resp.encoding = resp.apparent_encoding or "utf-8"
-        except Exception as e:
-            print(f"[{source['name']}] 요청 실패: {e}")
+    try:
+        raw_items = _fetch_page(start=0, length=100)
+    except Exception as e:
+        print(f"[better.fsc.go.kr] API 호출 실패: {e}")
+        return []
+
+    print(f"[better.fsc.go.kr] 수신 항목 수: {len(raw_items)}")
+
+    for raw in raw_items:
+        item_date: str = raw.get("replyRegDate", "")[:10]
+        # 날짜 필터
+        if item_date < cutoff:
             continue
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        items = _extract_items(soup, source["name"])
-        print(f"[{source['name']}] 파싱된 항목 수: {len(items)}")
+        item_type: str = raw.get("pastreqType", "")
+        data_idx: int = raw.get("dataIdx", 0)
+        unique_id = f"{item_type}:{data_idx}"
 
-        for item in items:
-            # 날짜 필터: cutoff 이후 항목만
-            if item["date"] and item["date"] < cutoff:
-                continue
-            # 이미 발송한 항목 제외
-            if item["id"] in seen_ids:
-                continue
-            new_items.append(item)
+        # 이미 발송한 항목 제외
+        if unique_id in seen_ids:
+            continue
+
+        new_items.append(
+            {
+                "id": unique_id,
+                "title": raw.get("title", "").strip(),
+                "date": item_date,
+                "url": _build_detail_url(item_type, data_idx),
+                "category": item_type or "기타",
+            }
+        )
 
     return new_items
