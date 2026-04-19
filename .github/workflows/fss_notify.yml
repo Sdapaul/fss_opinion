@@ -36,6 +36,7 @@ jobs:
           FSS_EMAIL_SENDER:     ${{ secrets.FSS_EMAIL_SENDER }}
           FSS_EMAIL_PASSWORD:   ${{ secrets.FSS_EMAIL_PASSWORD }}
           FSS_EMAIL_RECIPIENTS: ${{ secrets.FSS_EMAIL_RECIPIENTS }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
 
       - name: seen_items.json 변경사항 커밋

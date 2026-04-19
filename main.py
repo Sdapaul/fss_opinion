@@ -18,6 +18,7 @@ from pathlib import Path
 
 from scraper import fetch_new_items
 from emailer import send_email
+from summarizer import summarize_item
 
 SEEN_FILE = Path("seen_items.json")
 
@@ -48,6 +49,9 @@ def main() -> None:
     print(f"신규 항목: {len(new_items)}건")
 
     if new_items:
+        for item in new_items:
+            print(f"  AI 요약 중: {item['title'][:40]}…")
+            item["summary"] = summarize_item(item)
         send_email(new_items)
         # 발송 완료 항목을 이력에 추가
         for item in new_items:
