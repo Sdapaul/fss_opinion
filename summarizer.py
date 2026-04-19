@@ -7,7 +7,8 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 HEADERS = {
     "User-Agent": (
@@ -18,23 +19,21 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
 
-_model = None
+_client = None
+
+_SYSTEM_PROMPT = (
+    "당신은 금융 규제 전문가입니다. "
+    "금융감독원 비조치의견서·법령해석 문서를 읽고 핵심 내용을 "
+    "3~4문장으로 간결하게 요약합니다. "
+    "전문 용어는 유지하고, 질의 배경·회신 결론·주요 근거를 포함하세요."
+)
 
 
-def _get_model():
-    global _model
-    if _model is None:
-        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        _model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            system_instruction=(
-                "당신은 금융 규제 전문가입니다. "
-                "금융감독원 비조치의견서·법령해석 문서를 읽고 핵심 내용을 "
-                "3~4문장으로 간결하게 요약합니다. "
-                "전문 용어는 유지하고, 질의 배경·회신 결론·주요 근거를 포함하세요."
-            ),
-        )
-    return _model
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    return _client
 
 
 def _fetch_detail_text(url: str) -> str:
@@ -76,10 +75,14 @@ def summarize_item(item: dict) -> str:
         return ""
 
     try:
-        model = _get_model()
-        response = model.generate_content(
-            f"[{item['category']}] {item['title']}\n\n{body}",
-            generation_config=genai.GenerationConfig(max_output_tokens=400),
+        client = _get_client()
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=f"[{item['category']}] {item['title']}\n\n{body}",
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                max_output_tokens=400,
+            ),
         )
         return response.text.strip()
     except Exception as e:
