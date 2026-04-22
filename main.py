@@ -20,7 +20,7 @@ from pathlib import Path
 from scraper import fetch_new_items
 from emailer import send_email
 from summarizer import summarize_item
-from db import save_items, export_excel_bytes
+from db import init_db, save_items, export_excel_bytes
 
 SEEN_FILE = Path("seen_items.json")
 
@@ -43,6 +43,7 @@ def save_seen(seen: set) -> None:
 
 
 def main() -> None:
+    init_db()
     seen = load_seen()
     print(f"기존 발송 이력: {len(seen)}건")
 

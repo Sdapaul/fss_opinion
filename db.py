@@ -30,6 +30,11 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def init_db() -> None:
+    """DB 파일과 테이블을 미리 생성 (신규 항목이 없어도 파일이 존재하도록)."""
+    _conn().close()
+
+
 def save_items(items: list[dict]) -> None:
     """발송된 항목을 DB에 저장 (중복 무시)."""
     today = date.today().isoformat()
