@@ -1,21 +1,40 @@
 #!/usr/bin/env python3
 """
-포털 최신 항목과 DB 발송 이력을 비교해 누락·불일치를 검증.
+포털 최신 항목과 발송 이력을 비교해 누락·불일치를 검증.
+
+seen_items.json(항상 커밋됨)을 1차 기준으로 확인하고,
+DB에도 있으면 추가로 인정합니다.
 
 실행:
   python validator.py [days_back=7]
 """
 
+import json
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 from scraper import _fetch_page, _build_detail_url
 from db import _conn
 
+SEEN_FILE = Path("seen_items.json")
+
+
+def _load_seen_ids() -> set:
+    """seen_items.json에서 발송 이력 ID 집합을 반환."""
+    if SEEN_FILE.exists():
+        try:
+            return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return set()
+
 
 def validate_recent(days_back: int = 7) -> dict:
-    """최근 days_back일 포털 항목이 DB에 모두 있는지 검증."""
+    """최근 days_back일 포털 항목이 seen_items.json 또는 DB에 있는지 검증."""
     cutoff = (date.today() - timedelta(days=days_back)).isoformat()
+
+    seen_ids = _load_seen_ids()
 
     try:
         raw_items = _fetch_page(start=0, length=100)
@@ -38,18 +57,26 @@ def validate_recent(days_back: int = 7) -> dict:
             "url": _build_detail_url(item_type, data_idx),
         }
 
-    if portal_items:
-        placeholders = ",".join("?" for _ in portal_items)
-        with _conn() as conn:
-            existing_ids = {
-                row[0]
-                for row in conn.execute(
-                    f"SELECT id FROM items WHERE id IN ({placeholders})",
-                    list(portal_items.keys()),
-                )
-            }
-    else:
-        existing_ids = set()
+    # seen_items.json 기준으로 확인 (DB 기능 추가 전 항목도 포함)
+    existing_ids = {uid for uid in portal_items if uid in seen_ids}
+
+    # DB에만 있는 경우도 인정 (DB가 존재할 때)
+    if portal_items and _conn is not None:
+        try:
+            remaining = set(portal_items.keys()) - existing_ids
+            if remaining:
+                placeholders = ",".join("?" for _ in remaining)
+                with _conn() as conn:
+                    db_ids = {
+                        row[0]
+                        for row in conn.execute(
+                            f"SELECT id FROM items WHERE id IN ({placeholders})",
+                            list(remaining),
+                        )
+                    }
+                existing_ids |= db_ids
+        except Exception:
+            pass
 
     missing_ids = set(portal_items.keys()) - existing_ids
     missing_items = [portal_items[uid] for uid in sorted(missing_ids)]
@@ -57,7 +84,7 @@ def validate_recent(days_back: int = 7) -> dict:
     return {
         "cutoff": cutoff,
         "portal_count": len(portal_items),
-        "db_count": len(existing_ids),
+        "seen_count": len(existing_ids),
         "missing_count": len(missing_ids),
         "missing_items": missing_items,
     }
@@ -74,7 +101,7 @@ def main() -> None:
         sys.exit(1)
 
     print(f"포털 항목 수: {result['portal_count']}건")
-    print(f"DB 발송 이력: {result['db_count']}건")
+    print(f"발송 이력 확인: {result['seen_count']}건")
     print(f"누락 항목 수: {result['missing_count']}건")
 
     if result["missing_items"]:
