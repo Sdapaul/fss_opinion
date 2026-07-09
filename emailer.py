@@ -72,6 +72,45 @@ def _highlight_laws(text: str) -> str:
     )
 
 
+def _build_detail_html(detail: dict) -> str:
+    """질의요지·회답·이유·첨부파일·회신일을 테이블로 렌더링."""
+    if not detail:
+        return ""
+
+    rows = ""
+    label_keys = [
+        ("회신일", "reply_date"),
+        ("첨부파일", "attachment"),
+        ("질의요지", "query"),
+        ("회답", "answer"),
+        ("이유", "reason"),
+    ]
+    for label, key in label_keys:
+        value = detail.get(key, "").strip()
+        if not value:
+            continue
+        # 줄바꿈을 <br>로 변환
+        value_html = value.replace("\n", "<br>")
+        rows += f"""
+        <tr>
+          <th style="padding:5px 10px;background:#f8fafc;color:#374151;font-size:12px;
+                     font-weight:600;white-space:nowrap;vertical-align:top;
+                     border:1px solid #e5e7eb;width:70px;">{label}</th>
+          <td style="padding:5px 10px;font-size:12px;color:#374151;line-height:1.7;
+                     border:1px solid #e5e7eb;">{value_html}</td>
+        </tr>"""
+
+    if not rows:
+        return ""
+
+    return f"""
+    <div style="margin-top:8px;">
+      <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:4px;">
+        {rows}
+      </table>
+    </div>"""
+
+
 def _build_html(items: list[dict]) -> str:
     today = date.today().strftime("%Y년 %m월 %d일")
 
@@ -97,12 +136,27 @@ def _build_html(items: list[dict]) -> str:
                 f'&#128279; 원문: <a href="{item["url"]}" style="color:#6b7280;word-break:break-all;">{item["url"]}</a>'
                 f'</div>'
             )
+            field_badge = ""
+            if item.get("field"):
+                field_badge = (
+                    f'<span style="display:inline-block;font-size:11px;'
+                    f'background:#e0f2fe;color:#0369a1;border-radius:3px;'
+                    f'padding:1px 6px;margin-right:6px;">{item["field"]}</span>'
+                )
+            serial_badge = ""
+            if item.get("serial_no"):
+                serial_badge = (
+                    f'<span style="font-size:11px;color:#9ca3af;">#{item["serial_no"]}</span>'
+                )
+            detail_html = _build_detail_html(item.get("detail") or {})
             rows_html += f"""
             <tr>
               <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+                <div style="margin-bottom:3px;">{field_badge}{serial_badge}</div>
                 <a href="{item['url']}" style="color:#1d4ed8;text-decoration:none;font-weight:500;">{_highlight_laws(item['title'])}</a>
                 {url_html}
                 {summary_html}
+                {detail_html}
               </td>
               <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;white-space:nowrap;color:#6b7280;vertical-align:top;">
                 {item['date']}
@@ -146,12 +200,20 @@ def _build_text(items: list[dict]) -> str:
     today = date.today().strftime("%Y-%m-%d")
     lines = [f"금융감독원 신규 알림 ({today})\n" + "=" * 50]
     for item in items:
+        field_str = f" [{item['field']}]" if item.get("field") else ""
+        serial_str = f" #{item['serial_no']}" if item.get("serial_no") else ""
         block = (
-            f"[{item['category']}] {item['title']} ({item['date']})\n"
+            f"[{item['category']}]{field_str}{serial_str} {item['title']} ({item['date']})\n"
             f"  원문 URL: {item['url']}"
         )
         if item.get("summary"):
             block += f"\n  [AI요약] {item['summary']}"
+        detail = item.get("detail") or {}
+        for label, key in [("회신일", "reply_date"), ("첨부파일", "attachment"),
+                            ("질의요지", "query"), ("회답", "answer"), ("이유", "reason")]:
+            val = detail.get(key, "").strip()
+            if val:
+                block += f"\n  [{label}] {val}"
         lines.append(block)
     return "\n\n".join(lines)
 

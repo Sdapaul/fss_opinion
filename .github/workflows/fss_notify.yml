@@ -2,10 +2,16 @@ name: FSS 비조치의견서·법령해석 알림
 
 on:
   schedule:
-    # KST 오전 7시 = UTC 22:00 (전날)
-    - cron: "0 22 * * *"
-    # KST 오후 3시 = UTC 06:00
-    - cron: "0 6 * * *"
+    # KST 09:00 = UTC 00:00
+    - cron: "0 0 * * 1-5"
+    # KST 11:00 = UTC 02:00
+    - cron: "0 2 * * 1-5"
+    # KST 13:00 = UTC 04:00
+    - cron: "0 4 * * 1-5"
+    # KST 15:00 = UTC 06:00
+    - cron: "0 6 * * 1-5"
+    # KST 17:00 = UTC 08:00
+    - cron: "0 8 * * 1-5"
   # 수동 실행 버튼 (테스트용)
   workflow_dispatch:
 
@@ -19,7 +25,6 @@ jobs:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
         with:
-          # 봇 커밋 후 push 할 수 있도록 token 사용
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Python 설치
@@ -45,6 +50,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add seen_items.json
           git add fss_items.db 2>/dev/null || true
-          # 변경이 있을 때만 커밋
           git diff --cached --quiet || git commit -m "chore: update seen_items.json [skip ci]"
           git push

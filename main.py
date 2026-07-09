@@ -17,7 +17,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from scraper import fetch_new_items
+from scraper import fetch_new_items, fetch_detail_content
 from emailer import send_email
 from summarizer import summarize_item
 from db import init_db, save_items, export_excel_bytes
@@ -42,10 +42,40 @@ def save_seen(seen: set) -> None:
     )
 
 
+def _is_legacy_seen(seen: set) -> bool:
+    """seen_ids가 구버전(fss.or.kr URL) 형식이면 True."""
+    return any("http" in s for s in seen)
+
+
+def _init_seen_from_portal() -> set:
+    """
+    현재 포털의 최신 항목 id를 모두 seen_ids에 추가.
+    첫 실행 또는 seen_items.json 형식 전환 시 호출.
+    발송 없이 현재 상태를 기준점으로 저장한다.
+    """
+    print("seen_items.json 초기화: 현재 포털 항목을 기준점으로 설정합니다...")
+    all_items = fetch_new_items(set(), days_back=365)
+    new_seen: set = set()
+    for item in all_items:
+        new_seen.add(item["id"])
+        if item.get("legacy_id") and item["legacy_id"] != item["id"]:
+            new_seen.add(item["legacy_id"])
+    print(f"초기화 완료: {len(new_seen)}건을 seen_ids에 등록 (발송 없음)")
+    return new_seen
+
+
 def main() -> None:
     init_db()
     seen = load_seen()
     print(f"기존 발송 이력: {len(seen)}건")
+
+    # 구버전 seen_ids(fss.or.kr URL 형식) 감지 → 자동 재초기화
+    if _is_legacy_seen(seen):
+        print("구버전 seen_items.json 감지 — 현재 포털 기준으로 재초기화합니다.")
+        seen = _init_seen_from_portal()
+        save_seen(seen)
+        print("재초기화 완료. 다음 실행부터 신규 항목을 알림합니다.")
+        return
 
     # 최근 3일치 항목 확인 (주말·공휴일 대비)
     new_items = fetch_new_items(seen, days_back=3)
@@ -53,6 +83,8 @@ def main() -> None:
 
     if new_items:
         for item in new_items:
+            print(f"  상세 내용 로딩: {item['title'][:40]}…")
+            item["detail"] = fetch_detail_content(item["url"])
             print(f"  AI 요약 중: {item['title'][:40]}…")
             item["summary"] = summarize_item(item)
 
@@ -66,9 +98,11 @@ def main() -> None:
 
         send_email(new_items, excel_bytes=excel_bytes)
 
-        # 발송 완료 항목을 이력에 추가
+        # 발송 완료 항목을 이력에 추가 (새 형식 + 구 형식 모두 저장)
         for item in new_items:
             seen.add(item["id"])
+            if item.get("legacy_id") and item["legacy_id"] != item["id"]:
+                seen.add(item["legacy_id"])
         save_seen(seen)
         print("seen_items.json 업데이트 완료")
     else:

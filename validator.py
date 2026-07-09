@@ -14,7 +14,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from scraper import _fetch_page, _build_detail_url
+from scraper import _fetch_page, _build_detail_url_compat as _build_detail_url
 from db import _conn
 
 SEEN_FILE = Path("seen_items.json")
